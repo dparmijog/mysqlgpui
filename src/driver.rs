@@ -23,7 +23,7 @@ pub enum DriverError {
     ConnectionRefused(String),
     #[error("unknown database: {0}")]
     UnknownDatabase(String),
-    #[error("unsupported connection scheme '{0}' (only mysql is supported today)")]
+    #[error("unsupported connection scheme '{0}' (supported: mysql, postgres)")]
     UnsupportedScheme(String),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -126,6 +126,15 @@ pub trait Dialect: Send + Sync {
     /// autocomplete candidates — never sent to the server, purely a
     /// presentation-layer vocabulary.
     fn keywords(&self) -> &'static [&'static str];
+    /// Builds a table reference for the sidebar's auto-generated preview
+    /// `SELECT`, given the open database and table name. MySQL supports
+    /// genuine cross-database qualification (`` `db`.`table` ``, the
+    /// default here); a Postgres connection is already scoped to one
+    /// database, so `db` would be misread as a schema name — override to
+    /// quote just `table`.
+    fn qualify_table(&self, db: &str, table: &str) -> String {
+        format!("{}.{}", self.quote_ident(db), self.quote_ident(table))
+    }
 }
 
 /// Backend contract. The TUI only ever talks to this trait; it never knows
