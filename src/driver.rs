@@ -146,15 +146,21 @@ pub trait Driver: Send + Sync {
         Self: Sized;
 
     /// Streams rows so callers never have to buffer a full result set;
-    /// `cancel` lets the UI abort a running query (e.g. on `Ctrl+C`).
+    /// `db` selects which database the statement runs against (MySQL:
+    /// switches the connection's active database first; Postgres: must
+    /// be `None` or the connection's own database, since a Postgres
+    /// connection can't switch databases). `cancel` lets the UI abort a
+    /// running query (e.g. on `Ctrl+C`).
     fn query<'a>(
         &'a self,
         sql: &'a str,
+        db: Option<&'a str>,
         cancel: CancellationToken,
     ) -> BoxStream<'a, anyhow::Result<Row>>;
 
-    /// Runs a statement that doesn't return rows; returns affected-row count.
-    async fn execute(&self, sql: &str) -> anyhow::Result<u64>;
+    /// Runs a statement that doesn't return rows; returns affected-row
+    /// count. `db` has the same meaning as in [`Driver::query`].
+    async fn execute(&self, sql: &str, db: Option<&str>) -> anyhow::Result<u64>;
 
     async fn schema(&self) -> anyhow::Result<Schema>;
 
@@ -172,7 +178,8 @@ pub trait Driver: Send + Sync {
     /// `App` state, whereas the sidebar wants it wrapped in [`Schema`].
     async fn list_databases(&self) -> anyhow::Result<Vec<String>>;
 
-    async fn explain(&self, sql: &str) -> anyhow::Result<Plan>;
+    /// `db` has the same meaning as in [`Driver::query`].
+    async fn explain(&self, sql: &str, db: Option<&str>) -> anyhow::Result<Plan>;
 
     fn dialect(&self) -> &dyn Dialect;
 }

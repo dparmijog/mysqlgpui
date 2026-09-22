@@ -1,9 +1,11 @@
 //! MySQL backend: implements [`Driver`] on top of `sqlx::MySqlPool`.
 
+use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
+use futures::TryStreamExt as _;
 use sqlx::mysql::{MySqlPool, MySqlRow};
-use sqlx::{Column as _, Row as _, TypeInfo as _};
+use sqlx::{Column as _, Either, Row as _, TypeInfo as _};
 use tokio_util::sync::CancellationToken;
 
 use crate::driver::{Column, ConnConfig, Dialect, Driver, DriverError, ForeignKey, Plan, Row, Schema, Table, Value};
@@ -45,6 +47,13 @@ const MYSQL_KEYWORDS: &[&str] = &[
 pub struct MySqlDriver {
     pool: MySqlPool,
     dialect: MySqlDialect,
+    /// The database (if any) named in the connect URL — used to restore
+    /// deterministic behavior for calls made with no explicit `db`
+    /// (the heartbeat, the CLI, and sidebar-tree browsing outside any
+    /// open database tab), since pool connections are now sometimes
+    /// left with a different database selected by a *previous*,
+    /// explicitly-scoped call. See [`Driver::query`]'s impl.
+    default_db: Option<String>,
 }
 
 /// Decodes a single MySQL cell into our backend-agnostic [`Value`], based on
@@ -153,23 +162,77 @@ fn text_col(row: &MySqlRow, idx: usize) -> anyhow::Result<String> {
 impl Driver for MySqlDriver {
     async fn connect(cfg: &ConnConfig) -> Result<Self, DriverError> {
         let pool = MySqlPool::connect(&cfg.url).await.map_err(classify_connect_error)?;
-        Ok(MySqlDriver { pool, dialect: MySqlDialect })
+        let default_db = pool.connect_options().get_database().map(str::to_string);
+        Ok(MySqlDriver { pool, dialect: MySqlDialect, default_db })
     }
 
     fn query<'a>(
         &'a self,
         sql: &'a str,
+        db: Option<&'a str>,
         cancel: CancellationToken,
     ) -> BoxStream<'a, anyhow::Result<Row>> {
-        let rows = sqlx::query(sql)
-            .fetch(&self.pool)
-            .map(|res| res.map_err(anyhow::Error::from).and_then(row_from_mysql));
-        rows.take_until(cancel.cancelled_owned()).boxed()
+        let pool = &self.pool;
+        // A pool connection with no `USE` issued on it defaults to
+        // whatever (if any) database the connect URL named, not the
+        // database tab the user has open in the sidebar — so `db`
+        // (falling back to the connect URL's own database when the
+        // caller has none, keeping every pool connection deterministic
+        // even after a *different* call leaves one scoped to another
+        // database) is prefixed as a `USE` statement and sent together
+        // with `sql` in one `raw_sql` multi-statement call, guaranteeing
+        // both run on the very same connection. (Running `USE` and
+        // `sql` as two separate `Executor` calls on a manually acquired
+        // connection hits a known sqlx/async-trait limitation —
+        // "implementation of `Executor` is not general enough" — so
+        // they're combined into a single call instead.)
+        // With neither a `db` nor a URL default, the plain
+        // prepared-statement path is kept — `raw_sql`'s unprepared
+        // protocol is unnecessary overhead (and loses statement
+        // caching) when there's nothing to switch to.
+        match db.or(self.default_db.as_deref()) {
+            None => {
+                let rows = sqlx::query(sql)
+                    .fetch(pool)
+                    .map(|res| res.map_err(anyhow::Error::from).and_then(row_from_mysql));
+                rows.take_until(cancel.cancelled_owned()).boxed()
+            }
+            Some(db) => {
+                let combined = format!("USE {}; {sql}", self.dialect.quote_ident(db));
+                let stream = try_stream! {
+                    let mut items = sqlx::raw_sql(&combined).fetch_many(pool);
+                    while let Some(item) = items.try_next().await? {
+                        if let Either::Right(row) = item {
+                            yield row_from_mysql(row)?;
+                        }
+                    }
+                };
+                stream.take_until(cancel.cancelled_owned()).boxed()
+            }
+        }
     }
 
-    async fn execute(&self, sql: &str) -> anyhow::Result<u64> {
-        let result = sqlx::query(sql).execute(&self.pool).await?;
-        Ok(result.rows_affected())
+    async fn execute(&self, sql: &str, db: Option<&str>) -> anyhow::Result<u64> {
+        match db.or(self.default_db.as_deref()) {
+            None => {
+                let result = sqlx::query(sql).execute(&self.pool).await?;
+                Ok(result.rows_affected())
+            }
+            Some(db) => {
+                let combined = format!("USE {}; {sql}", self.dialect.quote_ident(db));
+                let mut items = sqlx::raw_sql(&combined).fetch_many(&self.pool);
+                // `USE` reports its own zero-row result first; the
+                // caller's statement's affected-row count is whichever
+                // `Left` arrives last.
+                let mut affected = 0u64;
+                while let Some(item) = items.try_next().await? {
+                    if let Either::Left(result) = item {
+                        affected = result.rows_affected();
+                    }
+                }
+                Ok(affected)
+            }
+        }
     }
 
     async fn schema(&self) -> anyhow::Result<Schema> {
@@ -267,13 +330,18 @@ impl Driver for MySqlDriver {
         list_database_names(&self.pool).await
     }
 
-    async fn explain(&self, sql: &str) -> anyhow::Result<Plan> {
+    async fn explain(&self, sql: &str, db: Option<&str>) -> anyhow::Result<Plan> {
         let explain_sql = format!("EXPLAIN {sql}");
-        let raw_rows = sqlx::query(&explain_sql).fetch_all(&self.pool).await?;
-        let rows = raw_rows
-            .into_iter()
-            .map(row_from_mysql)
-            .collect::<anyhow::Result<Vec<_>>>()?;
+        let combined = db.or(self.default_db.as_deref())
+            .map(|db| format!("USE {}; {explain_sql}", self.dialect.quote_ident(db)));
+        let sql_to_run = combined.as_deref().unwrap_or(&explain_sql);
+        let mut items = sqlx::raw_sql(sql_to_run).fetch_many(&self.pool);
+        let mut rows = Vec::new();
+        while let Some(item) = items.try_next().await? {
+            if let Either::Right(row) = item {
+                rows.push(row_from_mysql(row)?);
+            }
+        }
         Ok(Plan { rows })
     }
 

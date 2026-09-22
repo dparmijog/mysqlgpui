@@ -140,14 +140,23 @@ impl Driver for PgDriver {
         Ok(PgDriver { pool, database, dialect: PgDialect })
     }
 
-    fn query<'a>(&'a self, sql: &'a str, cancel: CancellationToken) -> BoxStream<'a, anyhow::Result<Row>> {
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        db: Option<&'a str>,
+        cancel: CancellationToken,
+    ) -> BoxStream<'a, anyhow::Result<Row>> {
+        if let Err(e) = self.check_database(db) {
+            return futures::stream::once(async move { Err(e) }).boxed();
+        }
         let rows = sqlx::query(sql)
             .fetch(&self.pool)
             .map(|res| res.map_err(anyhow::Error::from).and_then(row_from_pg));
         rows.take_until(cancel.cancelled_owned()).boxed()
     }
 
-    async fn execute(&self, sql: &str) -> anyhow::Result<u64> {
+    async fn execute(&self, sql: &str, db: Option<&str>) -> anyhow::Result<u64> {
+        self.check_database(db)?;
         let result = sqlx::query(sql).execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
@@ -161,14 +170,7 @@ impl Driver for PgDriver {
     }
 
     async fn tables(&self, db_name: &str) -> anyhow::Result<Vec<Table>> {
-        if db_name != self.database {
-            anyhow::bail!(
-                "cannot browse database '{db_name}' from a Postgres connection to '{}': \
-                 Postgres has no cross-database queries — reconnect via the wizard with \
-                 '{db_name}' selected",
-                self.database
-            );
-        }
+        self.check_database(Some(db_name))?;
 
         let table_rows = sqlx::query(
             "SELECT table_name FROM information_schema.tables \
@@ -281,7 +283,8 @@ impl Driver for PgDriver {
         list_database_names(&self.pool).await
     }
 
-    async fn explain(&self, sql: &str) -> anyhow::Result<Plan> {
+    async fn explain(&self, sql: &str, db: Option<&str>) -> anyhow::Result<Plan> {
+        self.check_database(db)?;
         let explain_sql = format!("EXPLAIN {sql}");
         let raw_rows = sqlx::query(&explain_sql).fetch_all(&self.pool).await?;
         let rows = raw_rows.into_iter().map(row_from_pg).collect::<anyhow::Result<Vec<_>>>()?;
@@ -290,6 +293,25 @@ impl Driver for PgDriver {
 
     fn dialect(&self) -> &dyn Dialect {
         &self.dialect
+    }
+}
+
+impl PgDriver {
+    /// Postgres can't switch databases on an existing connection, so
+    /// every entry point that accepts a `db` selector must be `None` or
+    /// exactly the database this driver connected to.
+    fn check_database(&self, db: Option<&str>) -> anyhow::Result<()> {
+        if let Some(db) = db {
+            if db != self.database {
+                anyhow::bail!(
+                    "cannot run against database '{db}' from a Postgres connection to '{}': \
+                     Postgres has no cross-database queries — reconnect via the wizard with \
+                     '{db}' selected",
+                    self.database
+                );
+            }
+        }
+        Ok(())
     }
 }
 
