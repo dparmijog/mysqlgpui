@@ -33,19 +33,20 @@ original list of ideas so they can be referenced in conversation.
 
 ## Technical pending
 
-- **`sqldr-core` dependency** — `Cargo.toml` points at the local path
-  `../sqldr/crates/sqldr-core`, so a fresh clone doesn't build unless sqldr
-  sits next to it. Switch to a git dependency
-  (`git = "https://github.com/dparmijog/sqldr.git"`) or document the
-  side-by-side layout in a README.
 - **README** — what the app is, requirements (Linux build needs
   `libxkbcommon-x11-devel`), how to build and run.
 - **Release profile** — `strip = true` (68.9 MB → 57.5 MB, free); measure
   `lto = "thin"` and `codegen-units = 1` before adopting them (smaller
   binary, slower release builds).
-- **Not yet exercised with real input** — Ctrl+Enter, Ctrl+Space, Cancel,
-  result paging, and a real write (INSERT/UPDATE/DELETE) from the editor were
-  only verified by code, smoke hooks or unit tests.
+- **Unverified with real input (manual check)** — only exercised through
+  smoke hooks, code paths or unit tests so far:
+  - mouse-wheel and touchpad scrolling feel (after the optimized-deps change);
+  - clicking a connection to expand it; saving a connection from the "+"
+    dialog;
+  - clicking the Light/Dark toggle, and that the choice persists;
+  - Ctrl+Enter and Ctrl+Space on the real keyboard;
+  - Cancel, ‹ › result paging;
+  - a real write (INSERT/UPDATE/DELETE) from the editor.
 - **`target/` growth** — cargo keeps stale artifacts after every feature or
   profile change; run `cargo clean` (or `cargo-sweep`) now and then.
 
@@ -62,3 +63,5 @@ original list of ideas so they can be referenced in conversation.
 - **(6) Autocomplete** — dialect keywords (in the case being typed), table
   and column names of the open database; after `table.` only that table's
   columns. Pops up while typing; Ctrl+Space opens it on demand.
+- `sqldr-core` imported into `crates/sqldr-core` with its git history
+  (subtree); the repo builds on its own as a cargo workspace.

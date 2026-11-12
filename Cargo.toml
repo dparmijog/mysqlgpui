@@ -3,17 +3,29 @@ name = "mysqlgpui"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-# Reused as-is: the driver layer was built UI-agnostic precisely so another
-# frontend could sit on top of it.
-sqldr-core = { path = "../sqldr/crates/sqldr-core" }
-gpui-kit = { version = "0.9", features = ["tree-sitter-sql"] }
-tokio = { version = "1", features = ["rt-multi-thread"] }
+[workspace]
+members = ["crates/sqldr-core"]
+
+# Shared by the app and sqldr-core (which inherits them with `.workspace = true`).
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-futures = "0.3"
 anyhow = "1"
-url = "2"
+thiserror = "1"
 serde = { version = "1", features = ["derive"] }
+futures = "0.3"
+
+[dependencies]
+# UI-agnostic driver layer (Driver trait, MySQL/Postgres, guards, pagination),
+# imported from the sqldr TUI with its history.
+sqldr-core = { path = "crates/sqldr-core" }
+gpui-kit = { version = "0.9", features = ["tree-sitter-sql"] }
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+url = "2"
 toml = "0.8"
 directories = "5"
 # Same version/features as sqldr so both apps read the same keyring entries.
