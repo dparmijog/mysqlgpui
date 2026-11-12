@@ -31,6 +31,24 @@ original list of ideas so they can be referenced in conversation.
 - **(13) PostgreSQL** — `sqldr-core` already supports it; the connection
   form needs an engine selector.
 
+## Technical pending
+
+- **`sqldr-core` dependency** — `Cargo.toml` points at the local path
+  `../sqldr/crates/sqldr-core`, so a fresh clone doesn't build unless sqldr
+  sits next to it. Switch to a git dependency
+  (`git = "https://github.com/dparmijog/sqldr.git"`) or document the
+  side-by-side layout in a README.
+- **README** — what the app is, requirements (Linux build needs
+  `libxkbcommon-x11-devel`), how to build and run.
+- **Release profile** — `strip = true` (68.9 MB → 57.5 MB, free); measure
+  `lto = "thin"` and `codegen-units = 1` before adopting them (smaller
+  binary, slower release builds).
+- **Not yet exercised with real input** — Ctrl+Enter, Ctrl+Space, Cancel,
+  result paging, and a real write (INSERT/UPDATE/DELETE) from the editor were
+  only verified by code, smoke hooks or unit tests.
+- **`target/` growth** — cargo keeps stale artifacts after every feature or
+  profile change; run `cargo clean` (or `cargo-sweep`) now and then.
+
 ## Done
 
 - Saved connections shared with sqldr (`config.toml` + keyring), sidebar
