@@ -1,0 +1,31 @@
+[package]
+name = "mysqlgpui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Reused as-is: the driver layer was built UI-agnostic precisely so another
+# frontend could sit on top of it.
+sqldr-core = { path = "../sqldr/crates/sqldr-core" }
+gpui-kit = { version = "0.9", features = ["tree-sitter-sql"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio-util = "0.7"
+futures = "0.3"
+anyhow = "1"
+url = "2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+directories = "5"
+# Same version/features as sqldr so both apps read the same keyring entries.
+keyring = { version = "3", features = ["sync-secret-service", "linux-native", "crypto-rust"] }
+# Completion item types for the editor; same version gpui-component uses.
+lsp-types = "0.97"
+
+# gpui (layout, text shaping, rendering) is unusably slow unoptimized:
+# dependencies get full optimizations even in `cargo run`, while this crate
+# stays a fast-compiling debug build. Their debug info is dropped too: it
+# was ~1 GB per binary, and stepping into optimized gpui/sqlx code isn't
+# useful anyway. This crate keeps full debug info.
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
