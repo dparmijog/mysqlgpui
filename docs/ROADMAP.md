@@ -28,11 +28,25 @@ original list of ideas so they can be referenced in conversation.
 - **(11) Edit data in the grid** — generate `UPDATE … WHERE pk = …`, only for
   tables with a primary key.
 - **(12) Export results** to CSV / JSON.
-- **(13) PostgreSQL** — `sqldr-core` already supports it; the connection
-  form needs an engine selector.
 
 ## Technical pending
 
+- **Fold `sqldr-core` into the app, MySQL only** — decided: this project
+  targets MySQL exclusively. Later (not now), move `crates/sqldr-core` into
+  the app as plain modules and drop what only existed for multi-engine
+  support:
+  - `postgres.rs` (~390 lines), the `postgres` sqlx feature, and the
+    scheme dispatch in `connect()` / `DriverError::UnsupportedScheme`;
+  - the `Driver` and `Dialect` traits → a concrete MySQL type (no
+    `Arc<dyn Driver>`, no `async-trait`); MySQL quoting and keywords
+    become plain functions;
+  - the Postgres-specific notes in `query`/`qualify_table` docs.
+
+  Keep and move as-is: guards (`is_mutating`, `needs_where_confirmation`),
+  pagination, history, error classification, and their tests. Then remove
+  the cargo workspace (single crate again). Until then, run the core's
+  tests with `cargo test --workspace` (plain `cargo test` only runs the
+  app's).
 - **README** — what the app is, requirements (Linux build needs
   `libxkbcommon-x11-devel`), how to build and run.
 - **Release profile** — `strip = true` (68.9 MB → 57.5 MB, free); measure
